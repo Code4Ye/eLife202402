@@ -1,0 +1,94 @@
+## Part 1  Univariable Mendelian randomization analysis ##
+library(readr)
+dat<-read_csv('Data/UVMR.csv')
+
+# Main results #
+library(TwoSampleMR)
+res <- generate_odds_ratios(mr_res = mr(dat,method_list = c(
+"mr_ivw",
+"mr_egger_regression",
+"mr_weighted_median", 
+"mr_two_sample_ml", 
+"mr_wald_ratio")))
+res$OR <- round(res$or, digits = 2)
+res$ORLO <- round(res$or_lci95, digits = 2)
+res$ORUP <- round(res$or_uci95, digits = 2)
+res$OR_95CI <- paste(res$OR,"(",res$ORLO,",",res$ORUP,")",sep="")
+
+# R2 and F values #
+dat$EAF2 <- (1 - dat$eaf.exposure)
+dat$MAF <- pmin(dat$eaf.exposure,dat$EAF2)
+dat$R2 <- 2*(dat$beta.exposure^2)*dat$MAF*(1 - dat$MAF)
+PVEfx <- function(BETA, MAF, SE, N){
+pve <- (2*(BETA^2)*MAF*(1 - MAF))/((2*(BETA^2)*MAF*(1 - MAF)) + ((SE^2)*2*N*MAF*(1 - MAF)))
+return(pve)
+}
+dat$PVE <- mapply(PVEfx, dat$beta.exposure, dat$MAF, dat$se.exposure, N = dat$samplesize.exposure)
+dat$F <- ((dat$samplesize.exposure - 1 - 1)/1)*(dat$PVE/(1 - dat$PVE))
+
+# Heterogeneity and pleiotropy #
+het <- mr_heterogeneity(dat)
+pleio <- mr_pleiotropy_test(dat)
+
+# MR-PRESSO #
+library(RadialMR)
+res0 <- tsmr_to_rmr_format(dat)
+library(MRPRESSO)
+mrpre <- mr_presso(
+BetaOutcome ="beta.outcome", 
+BetaExposure = "beta.exposure", 
+SdOutcome ="se.outcome", 
+SdExposure = "se.exposure", 
+OUTLIERtest = TRUE,
+DISTORTIONtest = TRUE, 
+data = res0, 
+NbDistribution = 1000, 
+SignifThreshold = 0.05)
+
+# Radial MR #
+mrrad <- ivw_radial(r_input = res0, alpha = 0.05,
+weights = 1, tol = 0.0001, summary = TRUE)
+plotly_radial(mrrad)
+
+## Part2  Mutivariable Mendelian randomization analysis ##
+library(readr)
+MVMR_exp<-read_csv('Data/MVMR_exp.csv')
+MVMR_out<-read_csv('Data/MVMR_out.csv')
+BMA_exp<-read_csv('Data/BMA_exp.csv')
+BMA_out<-read_csv('Data/BMA_out.csv')
+
+# Data harmonise #
+library(TwoSampleMR)
+dat_mv <- mv_harmonise_data(
+exposure_dat = MVMR_exp,
+outcome_dat = MVMR_out, 
+harmonise_strictness = 2)
+
+library(TwoSampleMR)
+dat_bma <- mv_harmonise_data(
+exposure_dat = BMA_exp,
+outcome_dat = BMA_out, 
+harmonise_strictness = 2)
+
+# MVMR results #
+library(GagnonMR)
+res_mv <- mv_multiple_MendelianRandomization(
+  exposure_outcome_harmonized=dat_mv,
+  pheno_cov_exp = 0,
+  only_IVW = FALSE)
+
+# MR-BMA results #
+library(mrbma)
+res_bma <- mr_bma(
+  harmonized_data = dat_bma,
+  prior_prob = 0.5,
+  prior_sigma = 0.5,
+  top = 10,
+  kmin = 1,
+  kmax = 12,
+  remove_outliers = FALSE,
+  remove_influential = FALSE,
+  calculate_p = FALSE)
+bma_pp <- res_bma$model_best 
+bma_mip <- res_bma$mip_table
+
